@@ -123,7 +123,7 @@ FROM tmp t
 INNER JOIN icustays i
 ON t.hadm_id = i.hadm_id
    WHERE age>=18
-   AND los>=2
+   AND los>=3
 )
 select t.*, hw.weight_first as weight, hw.height_first as height
 from tmp0 t

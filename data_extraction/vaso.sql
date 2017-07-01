@@ -1,6 +1,5 @@
 ﻿/*
 Based on: https://github.com/MIT-LCP/mimic-code/blob/master/etc/vasopressor-durations/vasopressor-durations.sql
-Thanks to Alistair Johnson
 */
 
 -- Includes:

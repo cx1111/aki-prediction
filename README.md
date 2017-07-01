@@ -23,7 +23,7 @@ KDIGO Criteria.
 Baseline = admission measurement.
 
 - If in any 48H, serum creatinine increases by > 26.5umol/L or 0.3mg/dL. NO flexibility for time.
-- Or within 7 days, serum creatinine increases x1.5. Maybe more flexible.
+- Or within 7 days, serum creatinine increases x1.5 from the lowest value in that window.
 
 
 ### Stage 2

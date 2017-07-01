@@ -6,36 +6,36 @@ set search_path to mimiciii;
 -- Generating materialized views from individual scripts
 \ir ckd.sql -- 5417 subject ids
 \ir creatinine.sql -- 797389 measurements with subject_id and hadm_id. Missing some hadm_ids. 
-\ir demographics.sql -- 19534 icustays with subject_id, hadm_id, and icustay_id. Patients over 18 with icustay>=3 days.
+\ir demographics.sql -- 18596 icustays with subject_id, hadm_id, and icustay_id. Patients over 18 with icustay>=2 days.
 \ir lactate.sql -- 34272 measurements with subject_id, hadm_id, and icustay_id. 
-\ir map.sql -- 6178780 measurements with icustay_id. 
+\ir map.sql -- 6159189 measurements with icustay_id. 
 \ir sepsis.sql -- 58976 subject_ids with hadm_id. 
 \ir urine.sql -- 3394431 measurements with hadm_id, and icustay_id. Missing some hadm_id and icustay_id. 
 \ir vaso.sql -- 61532 subject_ids with icustay_id.
 
 
 
-
 -- Start with icustays>3 days for age 18+ patients
 
--- Keep only septic patients. 
+-- Link sepsis information
 drop materialized view if exists cohort0 cascade;
 create materialized view cohort0 as(
-select d.*
+select d.*, s.angus as sepsis
 from demographics d
 inner join angus_sepsis s
-on d.hadm_id=s.hadm_id
-where s.angus=1); -- 10097
+on d.hadm_id=s.hadm_id);
 
--- Remove patients with CKD according to icd9
+-- Link CKD status
 drop materialized view if exists cohort1 cascade;
 create materialized view cohort1 as(
-select *
-from cohort0
-where subject_id not in(
-select subject_id
-from ckd)
-); -- 7681 rows/icustays. 7135 distinct hadm, 6463 distinct subject 
+select c0.*,
+	case when ck.subject_id IS NULL then False
+	else True
+	end as ckd
+from cohort0 c0
+LEFT JOIN ckd ck
+on c0.subject_id=ck.subject_id); -- Some patients have multiple icu stays (in different hadm).
+
 
 
 ----------- Tables used to save computation time -----------------
@@ -67,7 +67,7 @@ select subject_id, hadm_id,
 	else (dischtime + interval '12' hour)
 	end as dischtime
 from tmp
-); -- 7135
+);
 
 -- Table of fuzzy icustay times used to fill in missing values
 drop materialized view if exists cohorticustays1 cascade;
@@ -96,14 +96,14 @@ select subject_id, icustay_id,
 	end as outtime,
 	intime as intimereal -- use this to calculate times from icu admission later
 from tmp
-); -- 7681
-------------------------------------------------------------------
+);
 
+----------------------- Calculate Creatinine Features --------------------------
+-- We are doing this here to create the final cohort.
 
 
 -- Keep only relevant cohort's creatinine
--- Also try to fill in missing hadm using admissions fuzzy time windows.
--- Discard missing hadm values that lie outside fuzzy windows. 
+-- Try to fill in missing hadm using admissions fuzzy time windows. Discard missing hadm values that lie outside fuzzy windows. 
 drop materialized view if exists creatinine1 cascade;
 create materialized view creatinine1 as(
 with tmp as( -- cohort subset measurements only, via subject and hadm id. 
@@ -141,7 +141,7 @@ from tmp t
 inner join cohorticustays1 i
 on t.charttime between i.intime and i.outtime
 and t.subject_id = i.subject_id
-); -- 135319. Dropped 50000 that could not be fit into an icustay. Can use left join to keep. 
+); -- 253449
 
 
 -- Get admission creatinine measurements. The closest measurement before intime. If none exist, the closest after.
@@ -186,30 +186,22 @@ select case when icustay_id is not null then icustay_id
        end as min_from_intime
 from tmp4
 order by icustay_id
-); -- 7646, no blanks. Although there are patients in the cohort without creatinine values... 
+); -- 18481, no blanks. Although there are patients in the cohort without creatinine values... drp those later
 
 
 
 
 ----------------------  Create final cohort.  ----------------------------------------------
---  Remove patients who have 'admission creatinines' >=1.5. 
--- Note, there are a lot of patients without 'admission creatinine' values. They will still be included. 
+
+-- Drop patients without creatinine values
 drop materialized view if exists cohort_final cascade;
 create materialized view cohort_final as(
 select *
 from cohort1
-/*
-where icustay_id not in(
-select icustay_id
-from admission_creatinine
-where value>1.5)
--- We don't just want to exclude those with >1.5, but also those without creatinines. 
-*/ -- 4993 icustay.
 where icustay_id in(
-select icustay_id
-from admission_creatinine
-where value<1.5)
-); --  4524 icustayid with 1.2, 5562 with 1.5. 
+select distinct(icustay_id)
+from creatinine1)
+); 
 
 
 -- Update the subset of admission and icustay fuzzy windows
@@ -220,7 +212,7 @@ from cohortadmissions1
 where hadm_id in (
       select hadm_id
       from cohort_final)
-); -- 4271, 5216
+);
 
 
 drop materialized view if exists cohorticustays_final cascade;
@@ -230,8 +222,11 @@ from cohorticustays1
 where icustay_id in (
       select icustay_id
       from cohort_final)
-); -- 4524, 5562
-------------------------------------------------------------------------------------------
+);
+
+
+
+-----------------------  Filter Covariates  -------------------------------------
 
 
 
@@ -243,7 +238,7 @@ from creatinine1
 where icustay_id in(
 select icustay_id
 from cohort_final)
-); --76580, 95130
+);
 
 
 
@@ -281,7 +276,7 @@ select t.*, extract(epoch from(t.charttime-i.intimereal))/60 as min_from_intime
 from tmp3 t
 inner join cohorticustays_final i
 on t.icustay_id = i.icustay_id
-); -- 1492567. No maps were excluded due to missing icustay id!!! 1808403 with creatinine 1.5
+);
 
 
 -- Keep only relevant cohort's urine and fill in missing icustay
@@ -318,8 +313,7 @@ select t.*, extract(epoch from(t.charttime-i.intimereal))/60 as min_from_intime
 from tmp3 t
 inner join cohorticustays_final i
 on t.icustay_id = i.icustay_id
-); -- 838491. Excluded about 1000 measurements due to missing icustayid.  1024683 with creat 1.5
-
+);
 
 -- Keep only relevant cohort's lactate
 drop materialized view if exists lactate_final cascade;
@@ -329,7 +323,7 @@ from lactate
 where icustay_id in(
 select icustay_id
 from cohort_final)
-); -- 3806, 4707
+);
 
 -- Keep only relevant cohort's vasopressor durations 
 drop materialized view if exists vaso_final cascade;
@@ -339,7 +333,7 @@ from vasopressordurations
 where icustay_id in(
 select icustay_id
 from cohort_final)
-); -- 4524, 5562
+);
 
 -- Every map, creatinine and urine from this point has an icustay_id.  
 
@@ -353,7 +347,7 @@ COPY(
   WHERE valuenum is not null
   ORDER BY icustay_id, min_from_intime
 )
-TO '/home/chen/Projects/HST953-MLinCriticalCare/HST.953/data_extraction/tables/creatinine.csv' DELIMITER ',' CSV HEADER;
+TO '/home/cx1111/Projects/aki-prediction/data_extraction/tables/creatinine.csv' DELIMITER ',' CSV HEADER;
 
 -- Map
 COPY(
@@ -362,7 +356,7 @@ COPY(
   WHERE valuenum is not null
   ORDER BY icustay_id, min_from_intime
 )
-TO '/home/chen/Projects/HST953-MLinCriticalCare/HST.953/data_extraction/tables/map.csv' DELIMITER ',' CSV HEADER;
+TO '/home/cx1111/Projects/aki-prediction/data_extraction/tables/map.csv' DELIMITER ',' CSV HEADER;
 
 -- Urine
 COPY(
@@ -371,7 +365,7 @@ COPY(
   WHERE value is not null
   ORDER BY icustay_id, min_from_intime
 )
-TO '/home/chen/Projects/HST953-MLinCriticalCare/HST.953/data_extraction/tables/urine.csv' DELIMITER ',' CSV HEADER;
+TO '/home/cx1111/Projects/aki-prediction/data_extraction/tables/urine.csv' DELIMITER ',' CSV HEADER;
 
 
 -- Demographics, lactate, vasopressor durations. There are commas in notes so use tab separated 
@@ -384,7 +378,7 @@ COPY(
   ON c.icustay_id = v.icustay_id
   ORDER BY subject_id, hadm_id, icustay_id
 )
-TO '/home/chen/Projects/HST953-MLinCriticalCare/HST.953/data_extraction/tables/cohort.tsv' DELIMITER E'\t' HEADER CSV;
+TO '/home/cx1111/Projects/aki-prediction/data_extraction/tables/cohort.tsv' DELIMITER E'\t' HEADER CSV;
 
 
 -- Admission creatinines
@@ -395,7 +389,7 @@ COPY(
   select icustay_id
   from cohort_final)
 )
-TO '/home/chen/Projects/HST953-MLinCriticalCare/HST.953/data_extraction/tables/admission_creatinine.csv' DELIMITER ',' CSV HEADER;
+TO '/home/cx1111/Projects/aki-prediction/data_extraction/tables/admission_creatinine.csv' DELIMITER ',' CSV HEADER;
 
 
 -----------------------------------------------------------------
