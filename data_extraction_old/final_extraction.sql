@@ -7,14 +7,10 @@ set search_path to mimiciii;
 \ir ckd.sql -- 5417 subject ids
 \ir creatinine.sql -- 797389 measurements with subject_id and hadm_id. Missing some hadm_ids. 
 \ir demographics.sql -- 18596 icustays with subject_id, hadm_id, and icustay_id. Patients over 18 with icustay>=2 days.
-
-\ir bp.sql -- 5050857 measurements with icustay_id. 
-\ir sepsis.sql -- 58976 subject_ids with hadm_id.
-\ir urine.sql -- 3394431 measurements with hadm_id, and icustay_id. Missing some hadm_id and icustay_id. 
-
-
 \ir lactate.sql -- 34272 measurements with subject_id, hadm_id, and icustay_id. 
-
+\ir bp.sql -- 5050857 measurements with icustay_id. 
+\ir sepsis.sql -- 58976 subject_ids with hadm_id. 
+\ir urine.sql -- 3394431 measurements with hadm_id, and icustay_id. Missing some hadm_id and icustay_id. 
 \ir vaso.sql -- 61532 subject_ids with icustay_id.
 
 
