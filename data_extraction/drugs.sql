@@ -1,3 +1,6 @@
+--Changes from original code
+--Get the start-time for vasopressors for patient who is given these drugs within 6 hours adm to ICU
+
 -- vasopressors (), antibiotics (aminoglycoside, vancomycin, polymixin), NSAIDs, immunosuppressants (calcineurin inhibitors), antifungal (amphotericin)
 -- proton pump inhibitors
 
@@ -14,8 +17,7 @@ Based on: https://github.com/MIT-LCP/mimic-code/blob/master/etc/vasopressor-dura
 
 -- select only the ITEMIDs from the inputevents_cv table related to vasopressors
 
-DROP MATERIALIZED VIEW IF EXISTS VASOPRESSORDURATIONS cascade;
-CREATE MATERIALIZED VIEW VASOPRESSORDURATIONS as
+--query = query_schema + """
 with io_cv as
 (
   select
@@ -204,17 +206,6 @@ FROM
         end as vaso_stop
     from vasocv5 v
 )
-
--- -- if you want to look at the results of the table before grouping:
--- select
---   icustay_id, charttime, vaso, vaso_rate, vaso_amount
---     , case when vaso_stopped = 1 then 'Y' else '' end as stopped
---     , vaso_start
---     , vaso_first
---     , vaso_stop
--- from vasocv6 order by charttime;
-
-
 , vasocv as
 (
 -- below groups together vasopressor administrations into groups
@@ -244,8 +235,7 @@ and
 (
 SELECT
   s1.icustay_id,
-  s1.starttime,
-  MIN(t1.endtime) AS endtime
+  MIN(s1.starttime) as starttime
 FROM vasocv s1
 INNER JOIN vasocv t1
   ON  s1.icustay_id = t1.icustay_id
@@ -258,79 +248,20 @@ WHERE NOT EXISTS(SELECT * FROM vasocv s2
                  WHERE s1.icustay_id = s2.icustay_id
                  AND s1.starttime > s2.starttime
                  AND s1.starttime <= s2.endtime)
-GROUP BY s1.icustay_id, s1.starttime
-ORDER BY s1.icustay_id, s1.starttime
+GROUP BY s1.icustay_id
+ORDER BY s1.icustay_id
 )
--- now we extract the associated data for metavision patients
--- do not need to group by itemid because we group by linkorderid
-, vasomv as
-(
-  select
-    icustay_id, linkorderid
-    , min(starttime) as starttime, max(endtime) as endtime
-  from io_mv
-  group by icustay_id, linkorderid
-)
-, vasomv_grp as
-(
+--filter to get the only patient taken drugs with 6hrs after admin ICU
 SELECT
-  s1.icustay_id,
-  s1.starttime,
-  MIN(t1.endtime) AS endtime
-FROM vasomv s1
-INNER JOIN vasomv t1
+  s1.*, t1.INTIME
+FROM vasocv_grp s1
+INNER JOIN ICUSTAYS t1
   ON  s1.icustay_id = t1.icustay_id
-  AND s1.starttime <= t1.endtime
-  AND NOT EXISTS(SELECT * FROM vasomv t2
-                 WHERE t1.icustay_id = t2.icustay_id
-                 AND t1.endtime >= t2.starttime
-                 AND t1.endtime < t2.endtime)
-WHERE NOT EXISTS(SELECT * FROM vasomv s2
-                 WHERE s1.icustay_id = s2.icustay_id
-                 AND s1.starttime > s2.starttime
-                 AND s1.starttime <= s2.endtime)
-GROUP BY s1.icustay_id, s1.starttime
-ORDER BY s1.icustay_id, s1.starttime
-),
-vaso_times as
-(
-  select
-    icustay_id
-    -- generate a sequential integer for convenience
-    , ROW_NUMBER() over (partition by icustay_id order by starttime) as vasonum
-    , starttime, endtime
-  from
-    vasocv_grp
+WHERE    DATE_PART('day', s1.starttime::timestamp - t1.INTIME::timestamp) * 24 + 
+              DATE_PART('hour', s1.starttime::timestamp - t1.INTIME::timestamp) <= 6
 
-  UNION
+--limit 10
 
-  select
-    icustay_id
-    , ROW_NUMBER() over (partition by icustay_id order by starttime) as vasonum
-    , starttime, endtime
-  from
-    vasomv_grp
-
-  order by icustay_id, vasonum
-),
-vaso_durations as
-(
-  SELECT icustay_id,sum(endtime-starttime) as duration
-  FROM vaso_times
-  GROUP BY icustay_id
-),
-icu_vaso as
-(
-  SELECT subject_id, icu.icustay_id, outtime-intime as icu_duration
-  , COALESCE(duration,INTERVAL '0 seconds') AS vaso_duration
-  FROM icustays icu
-  LEFT JOIN vaso_durations vd
-    ON icu.icustay_id = vd.icustay_id
-) 
-SELECT
-  subject_id, icustay_id, icu_duration,
-  vaso_duration, EXTRACT(EPOCH FROM vaso_duration)/EXTRACT(EPOCH FROM icu_duration) AS vaso_frac
-FROM icu_vaso
-
-
--- hi
+--"""
+--df = pd.read_sql_query(query, con)
+--display(df)
