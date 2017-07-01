@@ -331,3 +331,6 @@ SELECT
   subject_id, icustay_id, icu_duration,
   vaso_duration, EXTRACT(EPOCH FROM vaso_duration)/EXTRACT(EPOCH FROM icu_duration) AS vaso_frac
 FROM icu_vaso
+
+
+-- hi
