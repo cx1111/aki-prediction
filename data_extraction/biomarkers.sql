@@ -3,9 +3,8 @@
 
 
 
--- Create a table with max lactate measurement within first 72 hours 
+-- Create a table with max lactate measurement within first 18 hours 
 -- of admission to ICU for each patient
-
 DROP MATERIALIZED VIEW IF EXISTS lactate CASCADE;
 CREATE MATERIALIZED VIEW lactate AS
 
@@ -36,7 +35,7 @@ WITH ce_l AS
 
 )
 
--- select max lactate value within first 72 hours after admission to ICU
+-- select max lactate value within first 18 hours after admission to ICU
 SELECT subject_id, hadm_id, icustay_id, MAX(valuenum) AS max_val
 FROM 
 (
@@ -56,6 +55,6 @@ FROM
 	LEFT JOIN le_l
 	  ON ic.icustay_id = le_l.icustay_id
 ) AS all_l
-WHERE charttime < EXTRACT(epoch FROM intime) + 72*60*60
+WHERE charttime < EXTRACT(epoch FROM intime) + 18*60*60
 GROUP BY subject_id, hadm_id, icustay_id
 ORDER BY subject_id, hadm_id, icustay_id, max_val

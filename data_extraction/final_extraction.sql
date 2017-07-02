@@ -4,28 +4,47 @@ set search_path to mimiciii;
 
 
 -- Generating materialized views from individual scripts
-\ir ckd.sql -- 5417 subject ids
-\ir creatinine.sql -- 797389 measurements with subject_id and hadm_id. Missing some hadm_ids. 
-\ir demographics.sql -- 18596 icustays with subject_id, hadm_id, and icustay_id. Patients over 18 with icustay>=2 days.
 
-\ir bp.sql -- 5050857 measurements with icustay_id. 
-\ir sepsis.sql -- 58976 subject_ids with hadm_id.
-\ir urine.sql -- 3394431 measurements with hadm_id, and icustay_id. Missing some hadm_id and icustay_id. 
+\ir demographics.sql -- run this first for the time windows in which to get covariates: 'startintime' and 'endintime'
+
+\ir biomarkers.sql
+\ir ckd.sql -- a covariate
+\ir comorbidities.sql
+
+\ir drugs.sql
+\ir endstage.sql -- exclusion criteria
+\ir fluids.sql
+\ir rrt.sql
+\ir urine.sql
+\ir vitals.sql
 
 
-\ir lactate.sql -- 34272 measurements with subject_id, hadm_id, and icustay_id. 
+-- Start with icustays>18h for age 18+ patients
 
-\ir vaso.sql -- 61532 subject_ids with icustay_id.
-
-
-
--- Start with icustays>3 days for age 18+ patients
-
--- Link sepsis information
+-- Remove end stage renal disease cohort
 drop materialized view if exists cohort0 cascade;
 create materialized view cohort0 as(
-select d.*, s.angus as sepsis
+select d.*, d.
 from demographics d
+where d.hadm_id not in(
+  select hadm_id from esrd
+)
+);
+
+-- Add rrt label
+drop materialized view if exists cohort1 cascade;
+create materialized view cohort1 as(
+select c0.*, r.rrt 
+from cohort0 c0
+inner join rrt r
+on c0.icustay_id = r.icustay_id);
+
+
+-- Add sepsis information
+drop materialized view if exists cohort2 cascade;
+create materialized view cohort2 as(
+select c1.*, s.angus as sepsis
+from cohort1 c1
 inner join angus_sepsis s
 on d.hadm_id=s.hadm_id);
 
@@ -40,193 +59,6 @@ from cohort0 c0
 LEFT JOIN ckd ck
 on c0.subject_id=ck.subject_id); -- Some patients have multiple icu stays (in different hadm).
 
-
-
------------ Tables used to save computation time -----------------
--- Compute windows hospital or icu stay limits based on either +/- N hours or the midpoint of the current and the neighboring window if the time difference is less than 2*N hours.  
-
--- Table of fuzzy admission times used to fill in missing values
-drop materialized view if exists cohortadmissions1 cascade;
-create materialized view cohortadmissions1 as(
-with tmp as(
-     select subject_id, hadm_id, admittime, dischtime,
-     lag (dischtime) over (partition by subject_id order by admittime) as dischtime_lag,
-     lead (admittime) over (partition by subject_id order by admittime) as admittime_lead
-     from admissions
-     where hadm_id in (
-     	   select distinct(hadm_id) from cohort1
-     )
-)
-select subject_id, hadm_id,
-       case
-	when dischtime_lag is not null
-       	and dischtime_lag > (admittime - interval '24' hour)
-      	then admittime - ( (admittime - dischtime_lag) / 2 )
-	else admittime - interval '12' hour
-	end as admittime,
-	case
-	when admittime_lead is not null
-	and admittime_lead < (dischtime + interval '24' hour)
-	then dischtime + ( (admittime_lead - dischtime) / 2 )
-	else (dischtime + interval '12' hour)
-	end as dischtime
-from tmp
-);
-
--- Table of fuzzy icustay times used to fill in missing values
-drop materialized view if exists cohorticustays1 cascade;
-create materialized view cohorticustays1 as(
-with tmp as(
-     select subject_id, icustay_id, intime, outtime,
-     lag (outtime) over (partition by subject_id order by intime) as outtime_lag,
-     lead (intime) over (partition by subject_id order by intime) as intime_lead
-     from icustays
-     where icustay_id in (
-     	   select distinct(icustay_id) from cohort1
-     )
-)
-select subject_id, icustay_id,
-       case
-	when outtime_lag is not null
-       	and outtime_lag > (intime - interval '24' hour)
-      	then intime - ( (intime - outtime_lag) / 2 )
-	else intime - interval '12' hour
-	end as intime,
-	case
-	when intime_lead is not null
-	and intime_lead < (outtime + interval '24' hour)
-	then outtime + ( (intime_lead - outtime) / 2 )
-	else (outtime + interval '12' hour)
-	end as outtime,
-	intime as intimereal -- use this to calculate times from icu admission later
-from tmp
-);
-
------------------------ Calculate Creatinine Features --------------------------
--- We are doing this here to create the final cohort.
-
-
--- Keep only relevant cohort's creatinine
--- Try to fill in missing hadm using admissions fuzzy time windows. Discard missing hadm values that lie outside fuzzy windows. 
-drop materialized view if exists creatinine1 cascade;
-create materialized view creatinine1 as(
-with tmp as( -- cohort subset measurements only, via subject and hadm id. 
-     select *
-     from creatinine
-     where subject_id in(
-     	   select distinct(subject_id)
-     	   from cohort1)
-     and hadm_id in(
-     	 select distinct(hadm_id)
-	 from cohort1) 
-), tmp0 as( -- Isolate rows with hadm
-   select *
-   from tmp
-   where hadm_id is not null
-), tmp1 as( -- Isolate rows without hadm to do fewer calculations.  
-   select subject_id, charttime, valuenum
-   from tmp
-   where hadm_id is null
-), tmp2 as( -- try to get hadm_id for missing rows 
-   select t.subject_id, a.hadm_id as hadm_id, t.charttime, t.valuenum
-   from tmp1 t
-   inner join cohortadmissions1 a
-   on t.charttime between a.admittime and a.dischtime
-   and t.subject_id = a.subject_id -- (with +/-12h)
-), tmp3 as(
-select * from tmp0 -- original with hadm
-union
-select * from tmp2 -- extra hadm filled. 
-order by subject_id, hadm_id, charttime -- 184000 using union. Use union rather than union all because the duplicate rows indicate that the same info was probably input twice. 
-)
--- Try to match icustay ids to each creatinine measurement.  Careful not to use fuzzy admit times, but real ones. 
-select t.*, i.icustay_id, extract(epoch from(t.charttime-i.intimereal))/60 as min_from_intime 
-from tmp t
-inner join cohorticustays1 i
-on t.charttime between i.intime and i.outtime
-and t.subject_id = i.subject_id
-); -- 253449
-
-
--- Get admission creatinine measurements. The closest measurement before intime. If none exist, the closest after.
-drop materialized view if exists admission_creatinine cascade; 
-create materialized view admission_creatinine as(
-with tmp as( -- measurements before admission
-select icustay_id, valuenum as value, min_from_intime,
-       row_number() over (partition by icustay_id order by min_from_intime desc) as r
-from creatinine1
-where min_from_intime<=0
-), --   select count(distinct icustay_id) from cohort1; = 7681
-tmp1 as(
-select icustay_id, value, min_from_intime
-from tmp
-where r=1 -- 5772 icustay_ids
-),
-tmp2 as( -- measurements after admission
-select icustay_id, valuenum as value, min_from_intime,
-       row_number() over (partition by icustay_id order by min_from_intime) as r
-from creatinine1
-where min_from_intime>0
-),
-tmp3 as(
-select icustay_id, value, min_from_intime
-from tmp2
-where r=1
-), -- 7646 icustay_ids
-tmp4 as(select t1.icustay_id, t1.value, t1.min_from_intime,
-  t3.icustay_id as icustay_id_after, t3.value as value_after, t3.min_from_intime as min_from_intime_after
-from tmp1 t1
-full join tmp3 t3
-on t1.icustay_id = t3.icustay_id -- 7646. There are some icustays with creatinine measurements only after, none with only before. 
-)
-select case when icustay_id is not null then icustay_id
-       else icustay_id_after
-       end as icustay_id,
-       case when value is not null then value
-       else value_after
-       end as value,
-       case when min_from_intime is not null then min_from_intime
-       else min_from_intime_after
-       end as min_from_intime
-from tmp4
-order by icustay_id
-); -- 18481, no blanks. Although there are patients in the cohort without creatinine values... drp those later
-
-
-
-
-----------------------  Create final cohort.  ----------------------------------------------
-
--- Drop patients without creatinine values
-drop materialized view if exists cohort_final cascade;
-create materialized view cohort_final as(
-select *
-from cohort1
-where icustay_id in(
-select distinct(icustay_id)
-from creatinine1)
-); 
-
-
--- Update the subset of admission and icustay fuzzy windows
-drop materialized view if exists cohortadmissions_final cascade;
-create materialized view cohortadmissions_final as(
-select *
-from cohortadmissions1
-where hadm_id in (
-      select hadm_id
-      from cohort_final)
-);
-
-
-drop materialized view if exists cohorticustays_final cascade;
-create materialized view cohorticustays_final as(
-select *
-from cohorticustays1
-where icustay_id in (
-      select icustay_id
-      from cohort_final)
-);
 
 
 

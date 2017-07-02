@@ -1,4 +1,4 @@
-/* Demographics of patients over 18 with icustay lengths over 3 days */
+/* Demographics of patients over 18 with icustay lengths over 18h */
 
 
 -- Height and weight, taken from https://github.com/MIT-LCP/mimic-code/blob/401132f256aff1e67161ce94cf0714ac1d344f5c/demographics/postgres/HeightWeightQuery.sql
@@ -100,36 +100,29 @@ ORDER BY subject_id, icustay_id;
 DROP MATERIALIZED view if exists demographics cascade;
 CREATE materialized view demographics as(
 WITH tmp as(
-SELECT a.subject_id, p.gender, a.ethnicity, 
+SELECT a.subject_id, p.gender, a.ethnicity,
 	EXTRACT(EPOCH FROM(a.admittime-p.dob))/(365.25*24*3600) as age,
-	a.hadm_id, a.admittime, a.dischtime, 
-	a.admission_type, a.admission_location, 
-	a.discharge_location, a.edregtime, a.edouttime, 
-	a.diagnosis, p.dod, p.dod_hosp
+	a.hadm_id,
+	a.diagnosis, p.dod_hosp as dod
 FROM admissions a
 INNER JOIN patients p
-      ON a.subject_id = p.subject_id -- 50765 hospital admissions 
+      ON a.subject_id = p.subject_id
 ), tmp0 as(
 SELECT t.*,
-       case when t.age >= 18 and t.age < 35 then 1
-       when t.age >= 35 and t.age < 50 then 2
-       when t.age >= 50 and t.age < 65 then 3
-       when t.age >= 65 and t.age < 80 then 4
-       when t.age >= 80 then 5
-       end as agebin,
-       i.icustay_id, i.intime, i.outtime, i.los,
+       i.icustay_id, i.intime, i.los,
+       i.intime - interval '6' hour as startintime, -- fuzzy intime. start of where to look for covariates
+       i.intime + interval '6' hour as endintime, -- limit time to where to look for covariates
        ROW_NUMBER() OVER(PARTITION BY t.hadm_id ORDER BY i.icustay_id DESC) AS icustaynum
 FROM tmp t
 INNER JOIN icustays i
 ON t.hadm_id = i.hadm_id
    WHERE age>=18
-   AND los>=3
+   AND los>=0.75 -- 18 hours
 )
 select t.*, hw.weight_first as weight, hw.height_first as height
 from tmp0 t
 left join heightweight hw
 on t.icustay_id = hw.icustay_id
 where t.icustaynum = 1
-ORDER BY subject_id, admittime, intime
+ORDER BY subject_id, intime
 ); 
-
