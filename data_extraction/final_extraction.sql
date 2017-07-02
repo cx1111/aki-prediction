@@ -70,13 +70,16 @@ LEFT JOIN elixhauser_quan eq
 on t3.hadm_id=eq.hadm_id),
 t5 as(
 select t4.*, u.urineoutput
-from t5
+from t4
 left join urine u
-on t4.icustay_id = u.icustay_id),
-
-
+on t4.icustay_id = u.icustay_id)
+select t5.*, labs.bicarbonate_min, labs.bicarbonate_max, labs.creatinine_min, labs.creatinine_max,
+labs.lactate_min, labs.lactate_max, labs.potassium_min, labs.potassium_max, labs.sodium_min, labs.sodium_max,
+labs.wbc_min, labs.wbc_max, labs.neutrophil_min, labs.neutrophil_max, labs.calcium_min, labs.calcium_max,
+labs.phosphate_min, labs.phosphate_max, labs.crp_min, labs.crp_max, labs.esr_min, labs.esr_max
+from t5
+inner join labsfirstday labs
+on t5.icustay_id = labs.icustay_id
 )
 TO '/home/cx1111/Projects/aki-prediction/data_extraction/tables/data.csv' DELIMITER ',' CSV HEADER;
-
-
 
