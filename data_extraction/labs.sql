@@ -1,10 +1,3 @@
--- Extract all serum creatinine labs
--- Reference: https://github.com/MIT-LCP/mimic-code/blob/3f004bc0d7f3e7c858228f7a06c37736e954580f/etc/firstday/labs-first-day.sql
-
-
-
-
-
 -- This query pivots lab values taken in the first 6 hours of a patient's stay
 
 -- Have already confirmed that the unit of measurement is always the same: null or the correct unit
@@ -53,7 +46,7 @@ FROM
         WHEN itemid = 50970 THEN 'PHOSPHATE'
         WHEN itemid = 50889 THEN 'CRP'
         WHEN itemid = 51288 THEN 'ESR'
-        WHEN itemid = 50912 THEN 'CRE'
+        WHEN itemid = 50912 THEN 'CREATININE'
       ELSE null
     END AS label
   , -- add in some sanity checks on the values
@@ -104,18 +97,3 @@ GROUP BY pvt.subject_id, pvt.hadm_id, pvt.icustay_id
 ORDER BY pvt.subject_id, pvt.hadm_id, pvt.icustay_id;
 
 commit;
-
-
-
--- Checking that all units are mg/dl
-/*  
-create materialized view creatinine as(
-select subject_id, hadm_id, charttime, valuenum, valueuom
-from labevents
-where itemid=50912
-order by subject_id, charttime); -- 797389
-
-select count(*) from creatinine where valueuom~*'mg/dl';  --797369
-select count(*) from creatinine where valueuom is null; -- 20. Adds up. 0.4 <= These values <= 1.9
-
-*/ 
