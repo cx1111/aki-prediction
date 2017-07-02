@@ -73,7 +73,7 @@ FROM  (
   from icustays ie
   left join chartevents ce
   on ie.subject_id = ce.subject_id and ie.hadm_id = ce.hadm_id and ie.icustay_id = ce.icustay_id
-  and ce.charttime between ie.intime and ie.intime + interval '6' hour
+  and ce.charttime between ie.intime - interval '3' hour and ie.intime + interval '6' hour
   -- exclude rows marked as error
   and ce.error IS DISTINCT FROM 1
   where ce.itemid in

@@ -1,11 +1,26 @@
-﻿
+﻿-- ------------------------------------------------------------------
+-- Purpose: Create a view of the urine output for each ICUSTAY_ID over the first 6 hours.
+-- ------------------------------------------------------------------
 
-/* All urine events from outputevents. Adapted from https://github.com/MIT-LCP/mimic-code/blob/master/etc/firstday/urine-output-first-day.sql */
+DROP MATERIALIZED VIEW IF EXISTS urine CASCADE;
+create materialized view urine as
+select
+  -- patient identifiers
+  ie.subject_id, ie.hadm_id, ie.icustay_id
 
-drop materialized view if exists urine cascade;
-create materialized view urine as(
-select subject_id, hadm_id, icustay_id, charttime, value
-from outputevents
+  -- volumes associated with urine output ITEMIDs
+  , sum(
+      -- we consider input of GU irrigant as a negative volume
+      case when oe.itemid = 227488 then -1*VALUE
+      else VALUE end
+  ) as UrineOutput
+from icustays ie
+-- Join to the outputevents table to get urine output
+left join outputevents oe
+-- join on all patient identifiers
+on ie.subject_id = oe.subject_id and ie.hadm_id = oe.hadm_id and ie.icustay_id = oe.icustay_id
+-- and ensure the data occurs during the first 6h
+and oe.charttime between (ie.intime - interval '3' hour)  and (ie.intime + interval '6' hour) -- first ICU 6h
 where itemid in
 (
 -- these are the most frequently occurring urine output observations in CareVue
@@ -24,7 +39,7 @@ where itemid in
 40096, -- "Urine Out Ureteral Stent #1"
 40651, -- "Urine Out Ureteral Stent #2"
 
--- these are the most frequently occurring urine output observations in CareVue
+-- these are the most frequently occurring urine output observations in MetaVision
 226559, -- "Foley"
 226560, -- "Void"
 226561, -- "Condom Cath"
@@ -33,27 +48,10 @@ where itemid in
 226564, -- "R Nephrostomy"
 226565, -- "L Nephrostomy"
 226567, --	Straight Cath
-226557, -- "R Ureteral Stent"
-226558  -- "L Ureteral Stent"
+226557, -- R Ureteral Stent
+226558, -- L Ureteral Stent
+227488, -- GU Irrigant Volume In
+227489  -- GU Irrigant/Urine Volume Out
 )
-order by hadm_id, icustay_id
-); -- 3394431     3.4 million
-
-
-
-
-
-/* Viewing missing fields */
--- select count(*) from urine; --3394431
--- select count(hadm_id) from urine; -- 3390489
--- select count(icustay_id) from urine; -- 3388639
--- select count(charttime) from urine; -- 3394431
-
-
-/* Unit check when above extracted valueuom also */
--- select count(*) from urine where lower(valueuom) like '%ml%'; -- 3386697
--- select count(*) from urine where valueuom is null; -- 7734. Sum of the 2 match total 3394431
--- select max(value) from urine; -- 4555555. Need to get rid of outliers. 
-
-
-
+group by ie.subject_id, ie.hadm_id, ie.icustay_id
+order by ie.subject_id, ie.hadm_id, ie.icustay_id;
