@@ -110,8 +110,6 @@ INNER JOIN patients p
 ), tmp0 as(
 SELECT t.*,
        i.icustay_id, i.intime, i.outtime, i.los,
-       i.intime - interval '6' hour as startintime, -- fuzzy intime. start of where to look for covariates
-       i.intime + interval '6' hour as endintime, -- limit time to where to look for covariates
        ROW_NUMBER() OVER(PARTITION BY t.hadm_id ORDER BY i.icustay_id DESC) AS icustaynum
 FROM tmp t
 INNER JOIN icustays i

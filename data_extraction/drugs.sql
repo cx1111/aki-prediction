@@ -18,6 +18,12 @@ Based on: https://github.com/MIT-LCP/mimic-code/blob/master/etc/vasopressor-dura
 -- select only the ITEMIDs from the inputevents_cv table related to vasopressors
 
 --query = query_schema + """
+
+
+
+
+create materialized view pressors as(
+
 with io_cv as
 (
   select
@@ -235,7 +241,7 @@ and
 (
 SELECT
   s1.icustay_id,
-  MIN(s1.starttime) as starttime
+  MIN(s1.starttime) as drug_starttime
 FROM vasocv s1
 INNER JOIN vasocv t1
   ON  s1.icustay_id = t1.icustay_id
@@ -257,8 +263,12 @@ SELECT
 FROM vasocv_grp s1
 INNER JOIN ICUSTAYS t1
   ON  s1.icustay_id = t1.icustay_id
-WHERE    DATE_PART('day', s1.starttime::timestamp - t1.INTIME::timestamp) * 24 + 
-              DATE_PART('hour', s1.starttime::timestamp - t1.INTIME::timestamp) <= 6
+WHERE    DATE_PART('day', s1.drug_starttime::timestamp - t1.INTIME::timestamp) * 24 + 
+              DATE_PART('hour', s1.drug_starttime::timestamp - t1.INTIME::timestamp) <= 6
+
+);
+
+
 
 --limit 10
 

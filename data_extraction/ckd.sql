@@ -9,9 +9,15 @@
     Specific code 585.9 Chronic kidney disease, unspecified convert 585.9 to ICD-10-CM
 */
 
+
 drop materialized view if exists ckd cascade;
 create materialized view ckd as(
-select distinct subject_id, icd9_code
-from mimiciii.diagnoses_icd
-where icd9_code in ('5851', '5852', '5853', '5854', '5855')); -- 1184
 
+with t as(
+select hadm_id
+from mimiciii.diagnoses_icd
+where icd9_code in ('5851', '5852', '5853', '5854', '5855') 
+)
+select ie.icustay_id, case when ie.hadm_id in (select hadm_id from t) then True else False end as ckd
+from icustays ie
+);
