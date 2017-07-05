@@ -1,0 +1,6 @@
+--Try clustering methods/graph visualization to look at rrt patients
+
+Steps:
+1. get all rrt patient from our study cohort - 1710
+2. rapid miner Kmean with K= 4. 
+	Some clusters show big differences in aids, age, diabetes complicated. 
